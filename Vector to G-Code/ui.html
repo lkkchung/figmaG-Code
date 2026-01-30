@@ -1,0 +1,191 @@
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 11px;
+    padding: 12px;
+    color: #333;
+  }
+  h2 { font-size: 14px; margin-bottom: 12px; }
+  .section { margin-bottom: 12px; }
+  .section-title { font-weight: 600; margin-bottom: 6px; color: #666; }
+  .row { display: flex; align-items: center; margin-bottom: 6px; gap: 8px; }
+  label { width: 80px; flex-shrink: 0; }
+  input, select {
+    flex: 1;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  input[type="number"] { width: 70px; flex: none; }
+  select { width: 70px; flex: none; }
+  textarea {
+    width: 100%;
+    height: 150px;
+    font-family: monospace;
+    font-size: 10px;
+    padding: 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    resize: vertical;
+  }
+  .buttons { display: flex; gap: 8px; margin-top: 12px; }
+  button {
+    flex: 1;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .primary { background: #18a0fb; color: white; }
+  .primary:hover { background: #0d8ce6; }
+  .secondary { background: #e5e5e5; color: #333; }
+  .secondary:hover { background: #d5d5d5; }
+  #status {
+    margin-top: 8px;
+    padding: 6px;
+    border-radius: 4px;
+    font-size: 10px;
+  }
+  #status.error { background: #fee; color: #c00; }
+  #status.success { background: #efe; color: #060; }
+</style>
+
+<h2>Vector to G-Code</h2>
+
+<div class="section">
+  <div class="section-title">Settings</div>
+  <div class="row">
+    <label>Units:</label>
+    <select id="units">
+      <option value="mm" selected>mm</option>
+      <option value="inch">inch</option>
+    </select>
+  </div>
+  <div class="row">
+    <label>Scale:</label>
+    <input type="number" id="scale" value="1" step="0.1" min="0.01">
+    <span>px per unit</span>
+  </div>
+  <div class="row">
+    <label>Feed rate:</label>
+    <input type="number" id="feedRate" value="1000" step="100" min="1">
+    <span id="feedUnit">mm/min</span>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Pen Control (Z-Axis)</div>
+  <div class="row">
+    <label>Pen up Z:</label>
+    <input type="number" id="penUp" value="5" step="0.5">
+  </div>
+  <div class="row">
+    <label>Pen down Z:</label>
+    <input type="number" id="penDown" value="-1" step="0.5">
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Output</div>
+  <textarea id="output" placeholder="G-code will appear here..."></textarea>
+</div>
+
+<div id="status"></div>
+
+<div class="buttons">
+  <button class="primary" id="generate">Generate G-Code</button>
+  <button class="secondary" id="copy">Copy</button>
+  <button class="secondary" id="download">Download</button>
+  <button class="secondary" id="cancel">Cancel</button>
+</div>
+
+<script>
+const units = document.getElementById('units');
+const scale = document.getElementById('scale');
+const feedRate = document.getElementById('feedRate');
+const feedUnit = document.getElementById('feedUnit');
+const penUp = document.getElementById('penUp');
+const penDown = document.getElementById('penDown');
+const output = document.getElementById('output');
+const status = document.getElementById('status');
+
+// Update feed rate unit label when units change
+units.onchange = () => {
+  feedUnit.textContent = units.value === 'mm' ? 'mm/min' : 'in/min';
+};
+
+// Generate G-code
+document.getElementById('generate').onclick = () => {
+  status.textContent = '';
+  status.className = '';
+  parent.postMessage({
+    pluginMessage: {
+      type: 'generate',
+      settings: {
+        units: units.value,
+        scale: parseFloat(scale.value),
+        feedRate: parseFloat(feedRate.value),
+        penUp: parseFloat(penUp.value),
+        penDown: parseFloat(penDown.value)
+      }
+    }
+  }, '*');
+};
+
+// Copy to clipboard
+document.getElementById('copy').onclick = () => {
+  if (!output.value) {
+    showStatus('No G-code to copy', true);
+    return;
+  }
+  navigator.clipboard.writeText(output.value).then(() => {
+    showStatus('Copied to clipboard!', false);
+  }).catch(() => {
+    // Fallback for older browsers
+    output.select();
+    document.execCommand('copy');
+    showStatus('Copied to clipboard!', false);
+  });
+};
+
+// Download as file
+document.getElementById('download').onclick = () => {
+  if (!output.value) {
+    showStatus('No G-code to download', true);
+    return;
+  }
+  const blob = new Blob([output.value], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'output.gcode';
+  a.click();
+  URL.revokeObjectURL(url);
+  showStatus('Downloaded output.gcode', false);
+};
+
+// Cancel
+document.getElementById('cancel').onclick = () => {
+  parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+};
+
+// Receive messages from plugin
+window.onmessage = (event) => {
+  const msg = event.data.pluginMessage;
+  if (msg.type === 'gcode') {
+    output.value = msg.gcode;
+    showStatus(`Generated ${msg.pathCount} path(s), ${msg.lineCount} lines`, false);
+  } else if (msg.type === 'error') {
+    showStatus(msg.message, true);
+  }
+};
+
+function showStatus(message, isError) {
+  status.textContent = message;
+  status.className = isError ? 'error' : 'success';
+}
+</script>
