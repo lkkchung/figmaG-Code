@@ -26,6 +26,10 @@ interface Origin {
   frame: FrameNode | null;  // null if we created a new frame
 }
 
+// Tolerance for bezier curve linearization (in pixels)
+// Smaller = more accurate but more points
+const BEZIER_TOLERANCE = 0.5;
+
 // Show UI with larger size for the output textarea
 figma.showUI(__html__, { width: 300, height: 480 });
 
@@ -235,23 +239,35 @@ function parsePathData(data: string, node: SceneNode): Path {
         }
         break;
 
-      case 'C': // Cubic bezier - for Phase 1, just use the endpoint
-        // Full bezier support will come in Phase 2
+      case 'C': // Cubic bezier - linearize with adaptive subdivision
         if (args.length >= 6) {
           // args: x1, y1, x2, y2, x, y (control points then endpoint)
+          const p0 = transformPoint(currentX, currentY, transform);
+          const p1 = transformPoint(args[0], args[1], transform);
+          const p2 = transformPoint(args[2], args[3], transform);
+          const p3 = transformPoint(args[4], args[5], transform);
+
+          // Linearize and add all points
+          const bezierPoints = linearizeCubicBezier(p0, p1, p2, p3);
+          points.push(...bezierPoints);
+
           currentX = args[4];
           currentY = args[5];
-          const abs = transformPoint(currentX, currentY, transform);
-          points.push(abs);
         }
         break;
 
-      case 'Q': // Quadratic bezier - use endpoint
+      case 'Q': // Quadratic bezier - linearize with adaptive subdivision
         if (args.length >= 4) {
+          const p0 = transformPoint(currentX, currentY, transform);
+          const p1 = transformPoint(args[0], args[1], transform);
+          const p2 = transformPoint(args[2], args[3], transform);
+
+          // Linearize and add all points
+          const bezierPoints = linearizeQuadraticBezier(p0, p1, p2);
+          points.push(...bezierPoints);
+
           currentX = args[2];
           currentY = args[3];
-          const abs = transformPoint(currentX, currentY, transform);
-          points.push(abs);
         }
         break;
 
@@ -279,6 +295,84 @@ function transformPoint(x: number, y: number, transform: Transform): Point {
     x: transform[0][0] * x + transform[0][1] * y + transform[0][2],
     y: transform[1][0] * x + transform[1][1] * y + transform[1][2]
   };
+}
+
+// Linearize a cubic bezier curve using adaptive subdivision
+// p0 = start, p1 = control1, p2 = control2, p3 = end
+// Returns array of points (excluding p0, which is already in the path)
+function linearizeCubicBezier(
+  p0: Point, p1: Point, p2: Point, p3: Point,
+  tolerance: number = BEZIER_TOLERANCE
+): Point[] {
+  const points: Point[] = [];
+
+  // Check if curve is flat enough using distance from control points to chord
+  const flatness = cubicBezierFlatness(p0, p1, p2, p3);
+
+  if (flatness <= tolerance) {
+    // Flat enough - just add the endpoint
+    points.push(p3);
+  } else {
+    // Subdivide using de Casteljau's algorithm at t=0.5
+    const mid01 = midpoint(p0, p1);
+    const mid12 = midpoint(p1, p2);
+    const mid23 = midpoint(p2, p3);
+    const mid012 = midpoint(mid01, mid12);
+    const mid123 = midpoint(mid12, mid23);
+    const mid0123 = midpoint(mid012, mid123);
+
+    // Recurse on both halves
+    points.push(...linearizeCubicBezier(p0, mid01, mid012, mid0123, tolerance));
+    points.push(...linearizeCubicBezier(mid0123, mid123, mid23, p3, tolerance));
+  }
+
+  return points;
+}
+
+// Linearize a quadratic bezier by converting to cubic
+// p0 = start, p1 = control, p2 = end
+function linearizeQuadraticBezier(
+  p0: Point, p1: Point, p2: Point,
+  tolerance: number = BEZIER_TOLERANCE
+): Point[] {
+  // Convert quadratic to cubic: cubic control points are at 2/3 along quad control
+  const cp1: Point = {
+    x: p0.x + (2/3) * (p1.x - p0.x),
+    y: p0.y + (2/3) * (p1.y - p0.y)
+  };
+  const cp2: Point = {
+    x: p2.x + (2/3) * (p1.x - p2.x),
+    y: p2.y + (2/3) * (p1.y - p2.y)
+  };
+  return linearizeCubicBezier(p0, cp1, cp2, p2, tolerance);
+}
+
+// Calculate flatness of cubic bezier (max distance from control points to chord)
+function cubicBezierFlatness(p0: Point, p1: Point, p2: Point, p3: Point): number {
+  // Use simplified flatness test: max perpendicular distance of control points to chord
+  const d1 = pointToLineDistance(p1, p0, p3);
+  const d2 = pointToLineDistance(p2, p0, p3);
+  return Math.max(d1, d2);
+}
+
+// Distance from point p to line defined by points a and b
+function pointToLineDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+
+  if (lengthSq === 0) {
+    // a and b are the same point
+    return Math.sqrt((p.x - a.x) ** 2 + (p.y - a.y) ** 2);
+  }
+
+  // Perpendicular distance using cross product
+  const cross = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx);
+  return cross / Math.sqrt(lengthSq);
+}
+
+function midpoint(a: Point, b: Point): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 function rectangleToPath(rect: RectangleNode): Path {
