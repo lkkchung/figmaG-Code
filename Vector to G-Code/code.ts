@@ -121,6 +121,22 @@ function determineOrigin(selection: readonly SceneNode[], settings: Settings): O
   frame.strokes = [{ type: 'SOLID', color: { r: 0.5, g: 0.5, b: 1 }, opacity: 0.5 }];
   frame.strokeWeight = 1;
 
+  // Move selected objects into the frame
+  for (const node of selection) {
+    // Store absolute position before moving
+    const absX = node.absoluteTransform[0][2];
+    const absY = node.absoluteTransform[1][2];
+
+    // Move node into frame
+    frame.appendChild(node);
+
+    // Reposition to maintain visual location (now relative to frame)
+    if ('x' in node && 'y' in node) {
+      (node as SceneNode & { x: number; y: number }).x = absX - frame.x;
+      (node as SceneNode & { x: number; y: number }).y = absY - frame.y;
+    }
+  }
+
   return {
     x: frame.absoluteTransform[0][2],
     y: frame.absoluteTransform[1][2],
@@ -313,15 +329,14 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
   lines.push('G17'); // XY plane
   lines.push('');
 
-  // Find height of paths for Y flip (Figma Y goes down, G-code Y goes up)
-  let minY = Infinity, maxY = -Infinity;
+  // Find max Y relative to origin for Y flip (Figma Y goes down, G-code Y goes up)
+  let relMaxY = -Infinity;
   for (const path of paths) {
     for (const point of path.points) {
-      minY = Math.min(minY, point.y);
-      maxY = Math.max(maxY, point.y);
+      const relY = point.y - origin.y;
+      relMaxY = Math.max(relMaxY, relY);
     }
   }
-  const pathHeight = maxY - minY;
 
   // Initial pen up
   lines.push(`G0 Z${penUp}`);
@@ -336,10 +351,10 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
 
     // Move to start (pen up)
     // Subtract origin to make coordinates relative to frame
-    // Flip Y: subtract from pathHeight to invert Y axis
+    // Flip Y: relMaxY - relY so bottom of content becomes Y=0
     const start = path.points[0];
     const startX = ((start.x - origin.x) / scale).toFixed(3);
-    const startY = ((pathHeight - (start.y - origin.y)) / scale).toFixed(3);
+    const startY = ((relMaxY - (start.y - origin.y)) / scale).toFixed(3);
     lines.push(`G0 X${startX} Y${startY}`);
 
     // Pen down
@@ -349,7 +364,7 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
     for (let j = 1; j < path.points.length; j++) {
       const point = path.points[j];
       const x = ((point.x - origin.x) / scale).toFixed(3);
-      const y = ((pathHeight - (point.y - origin.y)) / scale).toFixed(3);
+      const y = ((relMaxY - (point.y - origin.y)) / scale).toFixed(3);
       lines.push(`G1 X${x} Y${y} F${feedRate}`);
     }
 
