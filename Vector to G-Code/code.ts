@@ -22,6 +22,7 @@ interface Path {
 interface Origin {
   x: number;
   y: number;
+  height: number;  // frame height for Y flip
   frame: FrameNode | null;  // null if we created a new frame
 }
 
@@ -77,6 +78,17 @@ function generateGCode(settings: Settings): void {
 }
 
 function determineOrigin(selection: readonly SceneNode[], settings: Settings): Origin {
+  // Check if a single frame is selected - use it directly as bounds
+  if (selection.length === 1 && selection[0].type === 'FRAME') {
+    const frame = selection[0] as FrameNode;
+    return {
+      x: frame.absoluteTransform[0][2],
+      y: frame.absoluteTransform[1][2],
+      height: frame.height,
+      frame: frame
+    };
+  }
+
   // Check if all selected nodes share a common parent frame
   const firstParent = selection[0].parent;
 
@@ -90,6 +102,7 @@ function determineOrigin(selection: readonly SceneNode[], settings: Settings): O
       return {
         x: frame.absoluteTransform[0][2],
         y: frame.absoluteTransform[1][2],
+        height: frame.height,
         frame: frame
       };
     }
@@ -140,6 +153,7 @@ function determineOrigin(selection: readonly SceneNode[], settings: Settings): O
   return {
     x: frame.absoluteTransform[0][2],
     y: frame.absoluteTransform[1][2],
+    height: frame.height,
     frame: null  // null indicates we created a new frame
   };
 }
@@ -329,14 +343,9 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
   lines.push('G17'); // XY plane
   lines.push('');
 
-  // Find max Y relative to origin for Y flip (Figma Y goes down, G-code Y goes up)
-  let relMaxY = -Infinity;
-  for (const path of paths) {
-    for (const point of path.points) {
-      const relY = point.y - origin.y;
-      relMaxY = Math.max(relMaxY, relY);
-    }
-  }
+  // Use frame height for Y flip (Figma Y goes down, G-code Y goes up)
+  // This ensures Y=0 is at the bottom of the frame, not the bottom of paths
+  const frameHeight = origin.height;
 
   // Initial pen up
   lines.push(`G0 Z${penUp}`);
@@ -351,10 +360,10 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
 
     // Move to start (pen up)
     // Subtract origin to make coordinates relative to frame
-    // Flip Y: relMaxY - relY so bottom of content becomes Y=0
+    // Flip Y: frameHeight - relY so bottom of frame becomes Y=0
     const start = path.points[0];
     const startX = ((start.x - origin.x) / scale).toFixed(3);
-    const startY = ((relMaxY - (start.y - origin.y)) / scale).toFixed(3);
+    const startY = ((frameHeight - (start.y - origin.y)) / scale).toFixed(3);
     lines.push(`G0 X${startX} Y${startY}`);
 
     // Pen down
@@ -364,7 +373,7 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
     for (let j = 1; j < path.points.length; j++) {
       const point = path.points[j];
       const x = ((point.x - origin.x) / scale).toFixed(3);
-      const y = ((relMaxY - (point.y - origin.y)) / scale).toFixed(3);
+      const y = ((frameHeight - (point.y - origin.y)) / scale).toFixed(3);
       lines.push(`G1 X${x} Y${y} F${feedRate}`);
     }
 
