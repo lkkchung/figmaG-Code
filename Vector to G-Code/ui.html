@@ -98,7 +98,6 @@
 
 <div class="buttons">
   <button class="primary" id="generate">Generate G-Code</button>
-  <button class="secondary" id="copy">Copy</button>
   <button class="secondary" id="download">Download</button>
   <button class="secondary" id="cancel">Cancel</button>
 </div>
@@ -134,22 +133,6 @@ document.getElementById('generate').onclick = () => {
       }
     }
   }, '*');
-};
-
-// Copy to clipboard
-document.getElementById('copy').onclick = () => {
-  if (!output.value) {
-    showStatus('No G-code to copy', true);
-    return;
-  }
-  navigator.clipboard.writeText(output.value).then(() => {
-    showStatus('Copied to clipboard!', false);
-  }).catch(() => {
-    // Fallback for older browsers
-    output.select();
-    document.execCommand('copy');
-    showStatus('Copied to clipboard!', false);
-  });
 };
 
 // Download as file
