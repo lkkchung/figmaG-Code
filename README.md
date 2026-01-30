@@ -8,7 +8,8 @@ A Figma plugin that converts vector graphics to G-code for CNC machines and pen 
 - **Bezier curve support** - Cubic and quadratic bezier curves are linearized with adaptive subdivision for smooth output
 - **Text support** - Converts text to single-stroke paths using the Hershey Simplex font (ideal for plotters)
 - **Multi-pen color support** - Paths are grouped by stroke color with M0 pauses between groups for pen changes
-- **Configurable settings** - Units (mm/inch), scale, feed rate, and pen up/down Z heights
+- **Custom pen commands** - Define your own G-code for pen up/down (supports any plotter type)
+- **Persistent settings** - Your preferences are saved automatically and restored next session
 
 ## Installation
 
@@ -42,13 +43,15 @@ To use multiple pen colors:
 
 ## Settings
 
-| Setting | Description |
-|---------|-------------|
-| Units | mm or inch |
-| Scale | Pixels per unit (default: 1px = 1mm) |
-| Feed Rate | Movement speed in units/minute |
-| Pen Up | Z height when pen is raised |
-| Pen Down | Z height when pen is lowered |
+| Setting | Description | Example |
+|---------|-------------|---------|
+| Units | mm or inch | `mm` |
+| Scale | Pixels per unit | `1` (1px = 1mm) |
+| Feed Rate | Movement speed in units/minute | `1000` |
+| Pen Up | G-code command to raise pen | `G0 Z5` or `M5` |
+| Pen Down | G-code command to lower pen | `G0 Z-1` or `M3S030 F100` |
+
+Settings are automatically saved and restored between sessions.
 
 ## Development
 
