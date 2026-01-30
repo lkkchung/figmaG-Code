@@ -5,8 +5,8 @@ interface Settings {
   units: 'mm' | 'inch';
   scale: number;      // pixels per unit
   feedRate: number;   // units per minute
-  penUp: number;      // Z height when pen is up
-  penDown: number;    // Z height when pen is down
+  penUpCmd: string;   // G-code command to raise pen
+  penDownCmd: string; // G-code command to lower pen
 }
 
 interface Point {
@@ -187,8 +187,18 @@ function groupPathsByColor(paths: Path[]): Map<string, Path[]> {
 // Show UI with larger size for the output textarea
 figma.showUI(__html__, { width: 300, height: 480 });
 
-figma.ui.onmessage = (msg: { type: string; settings?: Settings }) => {
+// Load saved settings on startup
+(async () => {
+  const saved = await figma.clientStorage.getAsync('settings');
+  if (saved) {
+    figma.ui.postMessage({ type: 'loadSettings', settings: saved });
+  }
+})();
+
+figma.ui.onmessage = async (msg: { type: string; settings?: Settings }) => {
   if (msg.type === 'generate') {
+    // Save settings for next time
+    await figma.clientStorage.setAsync('settings', msg.settings);
     generateGCode(msg.settings!);
   } else if (msg.type === 'cancel') {
     figma.closePlugin();
@@ -726,7 +736,7 @@ function lineToPath(line: LineNode): Path {
 
 function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string {
   const lines: string[] = [];
-  const { units, scale, feedRate, penUp, penDown } = settings;
+  const { units, scale, feedRate, penUpCmd, penDownCmd } = settings;
 
   // Group paths by color
   const colorGroups = groupPathsByColor(paths);
@@ -749,7 +759,7 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
   const frameHeight = origin.height;
 
   // Initial pen up
-  lines.push(`G0 Z${penUp}`);
+  lines.push(penUpCmd);
 
   // Process each color group
   let globalPathIndex = 0;
@@ -779,7 +789,7 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
       lines.push(`G0 X${startX} Y${startY}`);
 
       // Pen down
-      lines.push(`G0 Z${penDown}`);
+      lines.push(penDownCmd);
 
       // Draw path
       for (let j = 1; j < path.points.length; j++) {
@@ -790,14 +800,14 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
       }
 
       // Pen up after path
-      lines.push(`G0 Z${penUp}`);
+      lines.push(penUpCmd);
     }
 
     // After each color group (except the last), return to origin and pause for pen change
     if (colorIndex < colorKeys.length - 1) {
       lines.push('');
       lines.push('; Return to origin for pen change');
-      lines.push(`G0 Z${penUp}`);
+      lines.push(penUpCmd);
       lines.push('G0 X0 Y0');
       lines.push('M0 ; Pause - change to next pen, then resume');
     }

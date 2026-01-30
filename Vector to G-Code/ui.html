@@ -19,6 +19,7 @@
     font-size: 11px;
   }
   input[type="number"] { width: 70px; flex: none; }
+  input.cmd-input { flex: 1; font-family: monospace; }
   select { width: 70px; flex: none; }
   textarea {
     width: 100%;
@@ -78,14 +79,14 @@
 </div>
 
 <div class="section">
-  <div class="section-title">Pen Control (Z-Axis)</div>
+  <div class="section-title">Pen Control Commands</div>
   <div class="row">
-    <label>Pen up Z:</label>
-    <input type="number" id="penUp" value="5" step="0.5">
+    <label>Pen up:</label>
+    <input type="text" id="penUpCmd" value="G0 Z5" class="cmd-input">
   </div>
   <div class="row">
-    <label>Pen down Z:</label>
-    <input type="number" id="penDown" value="-1" step="0.5">
+    <label>Pen down:</label>
+    <input type="text" id="penDownCmd" value="G0 Z-1" class="cmd-input">
   </div>
 </div>
 
@@ -107,8 +108,8 @@ const units = document.getElementById('units');
 const scale = document.getElementById('scale');
 const feedRate = document.getElementById('feedRate');
 const feedUnit = document.getElementById('feedUnit');
-const penUp = document.getElementById('penUp');
-const penDown = document.getElementById('penDown');
+const penUpCmd = document.getElementById('penUpCmd');
+const penDownCmd = document.getElementById('penDownCmd');
 const output = document.getElementById('output');
 const status = document.getElementById('status');
 
@@ -128,8 +129,8 @@ document.getElementById('generate').onclick = () => {
         units: units.value,
         scale: parseFloat(scale.value),
         feedRate: parseFloat(feedRate.value),
-        penUp: parseFloat(penUp.value),
-        penDown: parseFloat(penDown.value)
+        penUpCmd: penUpCmd.value,
+        penDownCmd: penDownCmd.value
       }
     }
   }, '*');
@@ -164,6 +165,16 @@ window.onmessage = (event) => {
     showStatus(`Generated ${msg.pathCount} path(s), ${msg.lineCount} lines`, false);
   } else if (msg.type === 'error') {
     showStatus(msg.message, true);
+  } else if (msg.type === 'loadSettings') {
+    // Restore saved settings
+    const s = msg.settings;
+    if (s.units) units.value = s.units;
+    if (s.scale) scale.value = s.scale;
+    if (s.feedRate) feedRate.value = s.feedRate;
+    if (s.penUpCmd) penUpCmd.value = s.penUpCmd;
+    if (s.penDownCmd) penDownCmd.value = s.penDownCmd;
+    // Update feed rate unit label
+    feedUnit.textContent = units.value === 'mm' ? 'mm/min' : 'in/min';
   }
 };
 
