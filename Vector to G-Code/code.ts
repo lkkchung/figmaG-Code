@@ -25,6 +25,7 @@ interface Path {
   points: Point[];
   closed: boolean;
   color?: StrokeColor;  // Stroke color for multi-pen support
+  isText?: boolean;     // True if path comes from text (excluded from optimization)
 }
 
 interface Origin {
@@ -674,7 +675,7 @@ function textNodeToPaths(node: TextNode): Path[] {
         }
 
         if (points.length >= 2) {
-          paths.push({ points, closed: false, color });
+          paths.push({ points, closed: false, color, isText: true });
         }
       }
 
@@ -741,12 +742,13 @@ function distance(a: Point, b: Point): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Reverse a path's points (preserves color and closed properties)
+// Reverse a path's points (preserves all properties)
 function reversePath(path: Path): Path {
   return {
     points: [...path.points].reverse(),
     closed: path.closed,
-    color: path.color
+    color: path.color,
+    isText: path.isText
   };
 }
 
@@ -841,24 +843,32 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
 
   for (let colorIndex = 0; colorIndex < colorKeys.length; colorIndex++) {
     const colorKey = colorKeys[colorIndex];
-    const groupPaths = optimizePaths(colorGroups.get(colorKey)!, currentPos);
+    const allGroupPaths = colorGroups.get(colorKey)!;
+
+    // Separate text paths from non-text paths
+    const vectorPaths = allGroupPaths.filter(p => !p.isText);
+    const textPaths = allGroupPaths.filter(p => p.isText);
+
+    // Optimize only vector paths, text stays in original order
+    const optimizedVectorPaths = optimizePaths(vectorPaths, currentPos);
+
+    // Combine: optimized vectors first, then text in original order
+    const orderedPaths = [...optimizedVectorPaths, ...textPaths];
 
     lines.push('');
     lines.push(`; ========================================`);
-    lines.push(`; Color: ${colorKey} (${groupPaths.length} path${groupPaths.length !== 1 ? 's' : ''})`);
+    lines.push(`; Color: ${colorKey} (${orderedPaths.length} path${orderedPaths.length !== 1 ? 's' : ''}${textPaths.length > 0 ? `, ${textPaths.length} text` : ''})`);
     lines.push(`; ========================================`);
 
-    // Process each path in this color group
-    for (const path of groupPaths) {
-      if (path.points.length === 0) continue;
+    // Helper to output a single path
+    const outputPath = (path: Path, label: string) => {
+      if (path.points.length === 0) return;
       globalPathIndex++;
 
       lines.push('');
-      lines.push(`; Path ${globalPathIndex}`);
+      lines.push(`; ${label} ${globalPathIndex}`);
 
       // Move to start (pen up)
-      // Subtract origin to make coordinates relative to frame
-      // Flip Y: frameHeight - relY so bottom of frame becomes Y=0
       const start = path.points[0];
       const startX = ((start.x - origin.x) / scale).toFixed(3);
       const startY = ((frameHeight - (start.y - origin.y)) / scale).toFixed(3);
@@ -878,8 +888,22 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
       // Pen up after path
       lines.push(penUpCmd);
 
-      // Update current position for next path optimization
+      // Update current position
       currentPos = pathEnd(path);
+    };
+
+    // Output vector paths (optimized)
+    for (const path of optimizedVectorPaths) {
+      outputPath(path, 'Path');
+    }
+
+    // Output text paths (in original order)
+    if (textPaths.length > 0) {
+      lines.push('');
+      lines.push(`; --- Text paths (not optimized) ---`);
+      for (const path of textPaths) {
+        outputPath(path, 'Text');
+      }
     }
 
     // After each color group (except the last), return to origin and pause for pen change
