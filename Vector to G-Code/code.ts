@@ -186,7 +186,7 @@ function groupPathsByColor(paths: Path[]): Map<string, Path[]> {
 }
 
 // Show UI with larger size for the output textarea
-figma.showUI(__html__, { width: 300, height: 480 });
+figma.showUI(__html__, { width: 300, height: 520 });
 
 // Load saved settings on startup
 (async () => {
