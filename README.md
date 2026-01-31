@@ -8,6 +8,7 @@ A Figma plugin that converts vector graphics to G-code for CNC machines and pen 
 - **Bezier curve support** - Cubic and quadratic bezier curves are linearized with adaptive subdivision for smooth output
 - **Text support** - Converts text to single-stroke paths using the Hershey Simplex font (ideal for plotters)
 - **Multi-pen color support** - Paths are grouped by stroke color with M0 pauses between groups for pen changes
+- **Path optimization** - Nearest-neighbor algorithm minimizes pen-up travel distance; reverses paths when beneficial
 - **Custom pen commands** - Define your own G-code for pen up/down (supports any plotter type)
 - **Persistent settings** - Your preferences are saved automatically and restored next session
 
@@ -34,6 +35,14 @@ To use multiple pen colors:
 3. The G-code will draw all paths of one color, return to origin, then pause (M0)
 4. Change to the next pen and press play/resume on your machine
 5. Repeat for each color group
+
+### Path Optimization
+
+Vector paths are automatically reordered to minimize pen-up travel:
+
+- Uses nearest-neighbor algorithm to pick the closest unvisited path
+- Reverses non-closed paths when the endpoint is closer than the startpoint
+- Text paths are excluded from optimization and drawn in their original order (left-to-right)
 
 ### Coordinate System
 

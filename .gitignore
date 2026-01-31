@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build output
+*.js
+!eslint.config.js
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Beads viewer local config
+.bv/
+
+# Claude Code
+.claude/
