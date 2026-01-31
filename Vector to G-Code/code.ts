@@ -734,6 +734,145 @@ function lineToPath(line: LineNode): Path {
   return { points, closed: false };
 }
 
+// Tolerance for considering points as connected (in pixels)
+const MERGE_TOLERANCE = 0.5;
+
+// Calculate distance between two points
+function distance(a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// Reverse a path's points (preserves color and closed properties)
+function reversePath(path: Path): Path {
+  return {
+    points: [...path.points].reverse(),
+    closed: path.closed,
+    color: path.color
+  };
+}
+
+// Get the start point of a path
+function pathStart(path: Path): Point {
+  return path.points[0];
+}
+
+// Get the end point of a path
+function pathEnd(path: Path): Point {
+  return path.points[path.points.length - 1];
+}
+
+// Merge connected paths to reduce pen up/down cycles
+function mergePaths(paths: Path[]): Path[] {
+  if (paths.length === 0) return [];
+
+  const merged: Path[] = [];
+  const used = new Set<number>();
+
+  for (let i = 0; i < paths.length; i++) {
+    if (used.has(i)) continue;
+
+    let current = paths[i];
+    used.add(i);
+
+    // Skip closed paths - they can't be merged
+    if (current.closed) {
+      merged.push(current);
+      continue;
+    }
+
+    // Try to extend the current path by finding connecting paths
+    let extended = true;
+    while (extended) {
+      extended = false;
+
+      for (let j = 0; j < paths.length; j++) {
+        if (used.has(j) || paths[j].closed) continue;
+
+        const candidate = paths[j];
+        const currentEnd = pathEnd(current);
+        const candStart = pathStart(candidate);
+        const candEnd = pathEnd(candidate);
+
+        // Check if candidate connects to current's end
+        if (distance(currentEnd, candStart) < MERGE_TOLERANCE) {
+          // Append candidate (skip first point to avoid duplicate)
+          current = {
+            points: [...current.points, ...candidate.points.slice(1)],
+            closed: false,
+            color: current.color
+          };
+          used.add(j);
+          extended = true;
+        } else if (distance(currentEnd, candEnd) < MERGE_TOLERANCE) {
+          // Append reversed candidate
+          const reversed = reversePath(candidate);
+          current = {
+            points: [...current.points, ...reversed.points.slice(1)],
+            closed: false,
+            color: current.color
+          };
+          used.add(j);
+          extended = true;
+        }
+      }
+    }
+
+    merged.push(current);
+  }
+
+  return merged;
+}
+
+// Optimize path order using nearest-neighbor algorithm
+// Starts from origin, picks closest unvisited path, reverses if endpoint is closer
+function optimizePaths(paths: Path[], origin: Point): Path[] {
+  if (paths.length <= 1) return paths;
+
+  const optimized: Path[] = [];
+  const remaining = [...paths];
+  let currentPos = origin;
+
+  while (remaining.length > 0) {
+    let bestIndex = 0;
+    let bestDist = Infinity;
+    let shouldReverse = false;
+
+    // Find nearest path (checking both start and end points)
+    for (let i = 0; i < remaining.length; i++) {
+      const path = remaining[i];
+      const startDist = distance(currentPos, pathStart(path));
+      const endDist = distance(currentPos, pathEnd(path));
+
+      if (startDist < bestDist) {
+        bestDist = startDist;
+        bestIndex = i;
+        shouldReverse = false;
+      }
+
+      // For non-closed paths, also consider starting from the end
+      if (!path.closed && endDist < bestDist) {
+        bestDist = endDist;
+        bestIndex = i;
+        shouldReverse = true;
+      }
+    }
+
+    // Add the best path (reversed if needed)
+    let bestPath = remaining[bestIndex];
+    if (shouldReverse) {
+      bestPath = reversePath(bestPath);
+    }
+
+    optimized.push(bestPath);
+    currentPos = pathEnd(bestPath);
+    remaining.splice(bestIndex, 1);
+  }
+
+  return optimized;
+}
+
 function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string {
   const lines: string[] = [];
   const { units, scale, feedRate, penUpCmd, penDownCmd } = settings;
@@ -763,13 +902,20 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
 
   // Process each color group
   let globalPathIndex = 0;
+  let currentPos: Point = { x: origin.x, y: origin.y + frameHeight }; // Start at origin (bottom-left)
+
   for (let colorIndex = 0; colorIndex < colorKeys.length; colorIndex++) {
     const colorKey = colorKeys[colorIndex];
-    const groupPaths = colorGroups.get(colorKey)!;
+    let groupPaths = colorGroups.get(colorKey)!;
 
+    // Optimize paths: merge connected, then reorder by nearest-neighbor
+    groupPaths = mergePaths(groupPaths);
+    groupPaths = optimizePaths(groupPaths, currentPos);
+
+    const originalCount = colorGroups.get(colorKey)!.length;
     lines.push('');
     lines.push(`; ========================================`);
-    lines.push(`; Color: ${colorKey} (${groupPaths.length} path${groupPaths.length !== 1 ? 's' : ''})`);
+    lines.push(`; Color: ${colorKey} (${groupPaths.length} path${groupPaths.length !== 1 ? 's' : ''}${groupPaths.length < originalCount ? `, merged from ${originalCount}` : ''})`);
     lines.push(`; ========================================`);
 
     // Process each path in this color group
@@ -801,6 +947,9 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
 
       // Pen up after path
       lines.push(penUpCmd);
+
+      // Update current position for next path optimization
+      currentPos = pathEnd(path);
     }
 
     // After each color group (except the last), return to origin and pause for pen change
@@ -810,6 +959,8 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
       lines.push(penUpCmd);
       lines.push('G0 X0 Y0');
       lines.push('M0 ; Pause - change to next pen, then resume');
+      // Reset position to origin for next color group
+      currentPos = { x: origin.x, y: origin.y + frameHeight };
     }
   }
 
