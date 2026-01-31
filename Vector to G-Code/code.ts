@@ -25,7 +25,8 @@ interface Path {
   points: Point[];
   closed: boolean;
   color?: StrokeColor;  // Stroke color for multi-pen support
-  isText?: boolean;     // True if path comes from text (excluded from optimization)
+  isText?: boolean;     // True if path comes from text
+  textGroupId?: number; // Groups text strokes from the same TextNode
 }
 
 interface Origin {
@@ -245,6 +246,7 @@ async function generateGCode(settings: Settings): Promise<void> {
   }
 
   // Load fonts and convert text nodes
+  let textGroupId = 0;
   for (const textNode of textNodes) {
     try {
       // Load all fonts used in the text node
@@ -260,8 +262,8 @@ async function generateGCode(settings: Settings): Promise<void> {
         }
       }
 
-      // Now convert to Hershey paths
-      const textPaths = textNodeToPaths(textNode);
+      // Now convert to Hershey paths (each TextNode gets a unique group ID)
+      const textPaths = textNodeToPaths(textNode, textGroupId++);
       allPaths.push(...textPaths);
     } catch (e) {
       console.error('Failed to load font for text node:', e);
@@ -614,7 +616,7 @@ function measureHersheyText(text: string): { width: number; height: number } {
 
 // Convert a TextNode to single-stroke paths using Hershey font
 // Scales output to match the TextNode's actual dimensions
-function textNodeToPaths(node: TextNode): Path[] {
+function textNodeToPaths(node: TextNode, textGroupId: number): Path[] {
   const paths: Path[] = [];
   const text = node.characters;
 
@@ -675,7 +677,7 @@ function textNodeToPaths(node: TextNode): Path[] {
         }
 
         if (points.length >= 2) {
-          paths.push({ points, closed: false, color, isText: true });
+          paths.push({ points, closed: false, color, isText: true, textGroupId });
         }
       }
 
@@ -810,6 +812,70 @@ function optimizePaths(paths: Path[], origin: Point): Path[] {
   return optimized;
 }
 
+// Represents a group of paths that should stay together (e.g., a TextNode)
+interface PathGroup {
+  paths: Path[];
+  start: Point;  // First point of first path
+  end: Point;    // Last point of last path
+}
+
+// Optimize text path groups using nearest-neighbor, keeping each group's paths together
+function optimizeTextGroups(textPaths: Path[], origin: Point): Path[] {
+  if (textPaths.length === 0) return [];
+
+  // Group paths by textGroupId
+  const groupMap = new Map<number, Path[]>();
+  for (const path of textPaths) {
+    const id = path.textGroupId ?? -1;
+    if (!groupMap.has(id)) {
+      groupMap.set(id, []);
+    }
+    groupMap.get(id)!.push(path);
+  }
+
+  // Convert to PathGroup array
+  const groups: PathGroup[] = [];
+  for (const paths of groupMap.values()) {
+    if (paths.length > 0) {
+      groups.push({
+        paths,
+        start: pathStart(paths[0]),
+        end: pathEnd(paths[paths.length - 1])
+      });
+    }
+  }
+
+  if (groups.length <= 1) {
+    return textPaths;
+  }
+
+  // Apply nearest-neighbor to groups
+  const optimized: Path[] = [];
+  const remaining = [...groups];
+  let currentPos = origin;
+
+  while (remaining.length > 0) {
+    let bestIndex = 0;
+    let bestDist = Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const group = remaining[i];
+      const dist = distance(currentPos, group.start);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+      }
+    }
+
+    const bestGroup = remaining[bestIndex];
+    optimized.push(...bestGroup.paths);
+    currentPos = bestGroup.end;
+    remaining.splice(bestIndex, 1);
+  }
+
+  return optimized;
+}
+
 function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string {
   const lines: string[] = [];
   const { units, scale, feedRate, penUpCmd, penDownCmd } = settings;
@@ -849,11 +915,19 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
     const vectorPaths = allGroupPaths.filter(p => !p.isText);
     const textPaths = allGroupPaths.filter(p => p.isText);
 
-    // Optimize only vector paths, text stays in original order
+    // Optimize vector paths with nearest-neighbor
     const optimizedVectorPaths = optimizePaths(vectorPaths, currentPos);
 
-    // Combine: optimized vectors first, then text in original order
-    const orderedPaths = [...optimizedVectorPaths, ...textPaths];
+    // Update position after vectors for text optimization
+    const textStartPos = optimizedVectorPaths.length > 0
+      ? pathEnd(optimizedVectorPaths[optimizedVectorPaths.length - 1])
+      : currentPos;
+
+    // Optimize text groups (keeps strokes within each TextNode together)
+    const optimizedTextPaths = optimizeTextGroups(textPaths, textStartPos);
+
+    // Combine: optimized vectors first, then optimized text groups
+    const orderedPaths = [...optimizedVectorPaths, ...optimizedTextPaths];
 
     lines.push('');
     lines.push(`; ========================================`);
@@ -897,11 +971,11 @@ function pathsToGCode(paths: Path[], settings: Settings, origin: Origin): string
       outputPath(path, 'Path');
     }
 
-    // Output text paths (in original order)
-    if (textPaths.length > 0) {
+    // Output text paths (groups optimized, strokes within groups preserved)
+    if (optimizedTextPaths.length > 0) {
       lines.push('');
-      lines.push(`; --- Text paths (not optimized) ---`);
-      for (const path of textPaths) {
+      lines.push(`; --- Text paths ---`);
+      for (const path of optimizedTextPaths) {
         outputPath(path, 'Text');
       }
     }
